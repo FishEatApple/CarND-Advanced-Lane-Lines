@@ -1,8 +1,8 @@
 /*
  * LaneDetector.cpp
  *
- *  Created on: Jan 26, 2019
- *      Author: Bao
+ *  Created on: Jan 16, 2020
+ *      Author: Gong
  */
 
 #include "LaneDetector.h"
@@ -24,16 +24,19 @@ void LaneDetector::cameraCalib(const vector<string>& chessboard_imgs, int nx, in
 		}
 	}
 
-	vector<vector<Point3f> > objpoints = {};
-	vector<vector<Point2f> > imgpoints = {};
+	vector<vector<Point3f> > objpoints;
+	vector<vector<Point2f> > imgpoints;
 	for (int i = 0; i < num_imgs; i++) {
 		Mat img = imread(chessboard_imgs[i]);
+		//imshow("img",img);
+		//waitKey(2);
 		if (!img.data) {
 			cout << "Cannot load image." << endl;
 			return;
 		}
 		Mat gray;
 		cvtColor(img, gray, COLOR_BGR2GRAY);
+		//imshow("chess",gray);
 		vector<Point2f> imgpts;
 		bool ret = findChessboardCorners(gray, Size(nx, ny), imgpts);
 		if (!ret) {
@@ -57,7 +60,7 @@ void LaneDetector::cameraCalib(const vector<string>& chessboard_imgs, int nx, in
 void LaneDetector::undistImage(InputArray img, OutputArray undist, OutputArray undist_v) {
 		undistort(img, undist, cam.cameraMat, cam.distCoeff, cam.cameraMat);
 		Mat undistVis;
-		undist.copyTo(undistVis);
+		undist.getMat().copyTo(undistVis);
 		vector<vector<Point2i> > poly(1);
 		for (auto x : src) poly[0].push_back(x);
 		polylines(undistVis, InputArrayOfArrays(poly),  true, Scalar(0, 0, 255), 3);
@@ -77,21 +80,24 @@ void LaneDetector::thresholding(InputArray img, OutputArray threshed, OutputArra
 	s_channel = chs[2];
 	threshold(s_channel, s_binary, 170, 255, THRESH_BINARY);
 
-	Mat gray, sobelx, abs_sobelx, scaled_sobel, sxbinary_low, sxbinary_high, sxbinary;
+	Mat gray, sobelx, abs_sobelx, scaled_sobel,scaled_sobel_8u,sxbinary_low, sxbinary_high, sxbinary;
 	cvtColor(img, gray, COLOR_BGR2GRAY);
 	Sobel(gray, sobelx, CV_64F, 1, 0);
 	abs_sobelx = cv::abs(sobelx);
 	scaled_sobel = 255*abs_sobelx/(*max_element(abs_sobelx.begin<double>(),
 			abs_sobelx.end<double>()));
-	threshold(scaled_sobel, sxbinary_low, 20, 255, THRESH_BINARY);
-	threshold(scaled_sobel, sxbinary_high, 100, 255, THRESH_BINARY_INV);
+	scaled_sobel.convertTo(scaled_sobel_8u,CV_8U);
+	threshold(scaled_sobel_8u, sxbinary_low, 20, 255, THRESH_BINARY);
+	threshold(scaled_sobel_8u, sxbinary_high, 100, 255, THRESH_BINARY_INV);
 	sxbinary_low.convertTo(sxbinary_low, CV_8U);
 	sxbinary_high.convertTo(sxbinary_high, CV_8U);
 	sxbinary = sxbinary_low & sxbinary_high;
 
 	Mat combinedCol;
 	Mat combined = sxbinary | s_binary | r_binary;
-	merge(vector<Mat>{sxbinary, s_binary, r_binary}, combinedCol);
+	vector<Mat> tmp;
+	tmp.push_back(sxbinary),tmp.push_back(s_binary),tmp.push_back(r_binary);
+	merge(tmp, combinedCol);
 	combined.copyTo(threshed);
 	combinedCol.copyTo(threshedCol);
 }
@@ -126,10 +132,12 @@ void LaneDetector::slidingWindow(InputArray img, OutputArray detected, OutputArr
 	vector<float>& right_coeff = rightLine.best_fit;
 	vector<int>& left_xfitted = leftLine.recent_xfitted;
 	vector<int>& right_xfitted = rightLine.recent_xfitted;
-	vector<Point2i> left_lane_inds = {};
-	vector<Point2i> right_lane_inds = {};
+	vector<Point2i> left_lane_inds ;
+	vector<Point2i> right_lane_inds;
 	Mat imgMRGB;
-	merge(vector<Mat>{imgM, imgM, imgM}, imgMRGB);
+	vector<Mat> tmp;
+	tmp.push_back(imgM),tmp.push_back(imgM),tmp.push_back(imgM);
+	merge(tmp, imgMRGB);
 	Mat det(imgMRGB.size(), CV_8UC3, Scalar(0));
 	if (leftLine.detected & rightLine.detected) {
 		for (int row=0; row < imgM.rows; row++) {
@@ -169,8 +177,8 @@ void LaneDetector::slidingWindow(InputArray img, OutputArray detected, OutputArr
 		int rightx_current = rightx_base;
 
 		for (int i = 0; i < nwindows; i++) {
-			vector<Point2i> good_left_inds = {};
-			vector<Point2i> good_right_inds = {};
+			vector<Point2i> good_left_inds ;
+			vector<Point2i> good_right_inds;
 
 			int win_y_low = imgM.rows - (i + 1)*window_height;
 			int win_y_high = imgM.rows - i * window_height;
@@ -218,8 +226,8 @@ void LaneDetector::slidingWindow(InputArray img, OutputArray detected, OutputArr
 		}
 
 	}
-	vector<float> left_lane_indx = {}; vector<float> left_lane_indy = {};
-	vector<float> right_lane_indx = {}; vector<float> right_lane_indy = {};
+	vector<float> left_lane_indx ; vector<float> left_lane_indy ;
+	vector<float> right_lane_indx ; vector<float> right_lane_indy ;
 	for (auto item : left_lane_inds) {
 		left_lane_indx.push_back((float)item.x); left_lane_indy.push_back((float)item.y);
 	}
@@ -304,11 +312,16 @@ void LaneDetector::projectBackward(InputArray img, InputArray det,
 			}
 		}
 	}
-	stringstream ss1;
+	/*stringstream ss1;
 	ss1 << "Radius of curvature: " <<
 			fixed << setprecision(0) << (leftLine.radius_of_curvature + rightLine.radius_of_curvature)/2 << "(m)";
 	stringstream ss2;
-	ss2 << "Vehicle is " << fixed << setprecision(1);
+	ss2 << "Vehicle is " << fixed << setprecision(1);*/
+	stringstream ss1;
+	ss1 << "Radius of curvature: " <<
+			fixed  << (leftLine.radius_of_curvature + rightLine.radius_of_curvature)/2 << "(m)";
+	stringstream ss2;
+	ss2 << "Vehicle is " << fixed ;
 	if (distToCtr > 0) {
 		ss2 << distToCtr << "(m)" << " left of center";
 	}  else {
@@ -342,7 +355,9 @@ void LaneDetector::detect(InputArray img, OutputArray out, OutputArray debug) {
 
 	Mat image = img.getMat();
 	Mat collage;
-	monitor({image, undist_v, threshedCol, debug_detected, warpedback, overlay}, collage);
+	vector<Mat> tmp;
+	tmp.push_back(image),tmp.push_back(undist_v),tmp.push_back(threshedCol),tmp.push_back(debug_detected),tmp.push_back(warpedback),tmp.push_back(overlay);
+	monitor(tmp, collage);
 
 	overlay.copyTo(out);
 	collage.copyTo(debug);

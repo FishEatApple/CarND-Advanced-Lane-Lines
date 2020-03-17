@@ -1,8 +1,8 @@
 /*
  * PolynomialRegressional.h
  *
- *  Created on: Jan 27, 2019
- *      Author: Bao
+ *  Created on: Jan 16, 2020
+ *      Author: Gong
  */
 
 #ifndef POLYNOMIALREGRESSIONAL_H_
