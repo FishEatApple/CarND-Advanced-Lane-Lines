@@ -54,11 +54,80 @@ void LaneDetector::cameraCalib(const vector<string>& chessboard_imgs, int nx, in
 	Mat img = imread(chessboard_imgs[0]);
 	calibrateCamera(objpoints, imgpoints, img.size(), cam.cameraMat,
 			cam.distCoeff, cam.rvecs, cam.tvecs);
+	initUndistortRectifyMap(cam.cameraMat,cam.distCoeff,Mat::eye(3,3,CV_32F),cam.cameraMat,imgSize,CV_32FC1,cam.mapUndistortX,cam.mapUndistortY);
+	//这里的dst作为src参数输入，src作为dst参数输入！！得到的是正常逻辑的逆矩阵，这样得到的map映射表才是正确的！
+	Mtrans = getPerspectiveTransform(dst, src);
+	//FileStorage fs("./H.xml",FileStorage::READ);
+	//fs["H"]>>Mtrans;
+	//cout<<Mtrans<<endl;
+	perspective_to_maps(Mtrans,imgSize,cam.mapBirdX,cam.mapBirdY);
+	Minv = getPerspectiveTransform(src, dst);
+	perspective_to_maps(Minv,imgSize,cam.mapBirdInvX,cam.mapBirdInvY);
+}
+void LaneDetector::mapCal(Mat cameraMat,Mat distCoeff,Mat Mtrans,Mat Minv)
+{
+	initUndistortRectifyMap(cameraMat,cam.distCoeff,Mat::eye(3,3,CV_32F),cam.cameraMat,imgSize,CV_32FC1,cam.mapUndistortX,cam.mapUndistortY);
+	//这里的dst作为src参数输入，src作为dst参数输入！！得到的是正常逻辑的逆矩阵，这样得到的map映射表才是正确的！
+	perspective_to_maps(Mtrans,imgSize,cam.mapBirdX,cam.mapBirdY);
+	perspective_to_maps(Minv,imgSize,cam.mapBirdInvX,cam.mapBirdInvY);
+}
+void LaneDetector::perspective_to_maps(const cv::Mat &perspective_mat, const cv::Size img_size,cv::Mat &map1, cv::Mat &map2)
+{
+	// invert the matrix because the transformation maps must be
+	// bird's view -> original
+	cv::Mat inv_perspective(perspective_mat.inv());
+	inv_perspective.convertTo(inv_perspective, CV_32FC1);
+ 
+	// create XY 2D array
+	// (((0, 0), (1, 0), (2, 0), ...),
+	//  ((0, 1), (1, 1), (2, 1), ...),
+	// ...)
+	cv::Mat xy(img_size, CV_32FC2);
+	float *pxy = (float*)xy.data;
+	for (int y = 0; y < img_size.height; y++)
+		for (int x = 0; x < img_size.width; x++)
+		{
+			*pxy++ = x;
+			*pxy++ = y;
+		}
+ 
+	// perspective transformation of the points
+	cv::Mat xy_transformed;
+	cv::perspectiveTransform(xy, xy_transformed, perspective_mat);
+ 
+       //Prevent errors when float32 to int16
+        float *pmytest = (float*)xy_transformed.data;
+	for (int y = 0; y < xy_transformed.rows; y++)
+		for (int x = 0; x < xy_transformed.cols; x++)
+		{
+			if (abs(*pmytest) > 5000) *pmytest = 5000.00;
+			pmytest++;
+			if (abs(*pmytest) > 5000) *pmytest = 5000.00;
+			pmytest++;
+		}
+ 
+	// split x/y to extra maps
+	assert(xy_transformed.channels() == 2);
+	cv::Mat maps[2]; // map_x, map_y
+	cv::split(xy_transformed, maps);
+ 
+	// remap() with integer maps is faster
+	Mat m1,m2;
+	cv::convertMaps(maps[0], maps[1], m1, m2, CV_32FC2);
+	//m1查找表中的点代表的含义是“我来自哪里”的坐标
+	Mat mArray[2];
+	split(m1,mArray);
+	map1=mArray[0];
+	map2=mArray[1];
+	Mat img=imread("./images0.bmp");
+	Mat warped;
+	remap(img, warped, map1, map2, CV_INTER_LINEAR);
+	imwrite("./test.bmp",warped);
 }
 
-
 void LaneDetector::undistImage(InputArray img, OutputArray undist, OutputArray undist_v) {
-		undistort(img, undist, cam.cameraMat, cam.distCoeff, cam.cameraMat);
+		remap(img, undist, cam.mapUndistortX, cam.mapUndistortY, CV_INTER_LINEAR);
+		//undistort(img, undist, cam.cameraMat, cam.distCoeff, cam.cameraMat);
 		Mat undistVis;
 		undist.getMat().copyTo(undistVis);
 		vector<vector<Point2i> > poly(1);
@@ -104,9 +173,10 @@ void LaneDetector::thresholding(InputArray img, OutputArray threshed, OutputArra
 
 
 void LaneDetector::projectForward(InputArray img, OutputArray warped) {
-	Mtrans = getPerspectiveTransform(src, dst);
-	Minv = getPerspectiveTransform(dst, src);
-	warpPerspective(img, warped, Mtrans, img.size(), INTER_LINEAR);
+	//Mtrans = getPerspectiveTransform(src, dst);
+	//Minv = getPerspectiveTransform(dst, src);
+	remap(img, warped, cam.mapBirdX, cam.mapBirdY, CV_INTER_LINEAR);
+	//warpPerspective(img, warped, Mtrans, img.size(),WARP_INVERSE_MAP+INTER_LINEAR);//由于得到的H矩阵是反的，因此这里需要加上WARP_INVERSE_MAP这个参数
 }
 
 
@@ -234,8 +304,8 @@ void LaneDetector::slidingWindow(InputArray img, OutputArray detected, OutputArr
 	for (auto item : right_lane_inds) {
 		right_lane_indx.push_back((float)item.x); right_lane_indy.push_back((float)item.y);
 	}
-	leftLine.detected = true;
-	rightLine.detected = true;
+	//leftLine.detected = true;
+	//rightLine.detected = true;
 	// fitting second order poly
 	PolynomialRegression<float> poly;
 	left_coeff.clear();
@@ -301,7 +371,8 @@ void LaneDetector::projectBackward(InputArray img, InputArray det,
 		OutputArray overlay, OutputArray wrpdbck) {
 	Mat image = img.getMat();
 	Mat warpedback;
-	warpPerspective(det, warpedback, Minv, det.size(), INTER_LINEAR);
+	remap(det, warpedback, cam.mapBirdInvX, cam.mapBirdInvY, CV_INTER_LINEAR);
+	//warpPerspective(det, warpedback, Minv, det.size(), INTER_LINEAR);
 	Mat ovrly(image.size(), CV_8UC3, Scalar(0));
 	for (int i = 0; i < image.rows; i++) {
 		for (int j = 0; j < image.cols; j++) {
@@ -336,31 +407,57 @@ void LaneDetector::projectBackward(InputArray img, InputArray det,
 
 void LaneDetector::detect(InputArray img, OutputArray out, OutputArray debug) {
 	Mat undist, undist_v;
+	//startTime = clock();
 	undistImage(img, undist, undist_v);
+	//endTime = clock();
+	//cout << "undistImage The run time is: " <<(double)(endTime - startTime) / CLOCKS_PER_SEC*1000 << "ms" << endl;
+	
 
 	Mat threshed, threshedCol;
+	//startTime = clock();
 	thresholding(undist, threshed, threshedCol);
+	//endTime = clock();
+	//cout << "thresholding The run time is: " <<(double)(endTime - startTime) / CLOCKS_PER_SEC*1000 << "ms" << endl;
+	
 
 	Mat warped;
+	//startTime = clock();
 	projectForward(threshed, warped);
+	//endTime = clock();
+	//cout << "projectForward The run time is: " <<(double)(endTime - startTime) / CLOCKS_PER_SEC*1000 << "ms" << endl;
+	
 
 	Mat detected, debug_detected;
+	//startTime = clock();
 	slidingWindow(warped, detected, debug_detected);
+	//endTime = clock();
+	//cout << "slidingWindow The run time is: " <<(double)(endTime - startTime) / CLOCKS_PER_SEC*1000 << "ms" << endl;
+	//startTime = clock();
 	compCurveRadius();
 	compDistToCtr();
+	//endTime = clock();
+	//cout << "compDistToCtr The run time is: " <<(double)(endTime - startTime) / CLOCKS_PER_SEC*1000 << "ms" << endl;
+	
 
 	Mat overlay;
 	Mat warpedback;
+	//startTime = clock();
 	projectBackward(img, detected, overlay, warpedback);
+	//endTime = clock();
+	//cout << "projectBackward The run time is: " <<(double)(endTime - startTime) / CLOCKS_PER_SEC*1000 << "ms" << endl;
+	
 
 	Mat image = img.getMat();
 	Mat collage;
 	vector<Mat> tmp;
+	//startTime = clock();
 	tmp.push_back(image),tmp.push_back(undist_v),tmp.push_back(threshedCol),tmp.push_back(debug_detected),tmp.push_back(warpedback),tmp.push_back(overlay);
 	monitor(tmp, collage);
 
 	overlay.copyTo(out);
 	collage.copyTo(debug);
+	//endTime = clock();
+	//cout << "monitor The run time is: " <<(double)(endTime - startTime) / CLOCKS_PER_SEC*1000 << "ms" << endl;
 }
 
 

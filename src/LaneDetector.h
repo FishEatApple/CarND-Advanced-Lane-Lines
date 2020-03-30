@@ -16,6 +16,7 @@
 
 #include <opencv2/opencv.hpp>
 
+#include<ctime>
 using namespace std;
 using namespace cv;
 
@@ -55,7 +56,21 @@ struct Camera {
 	Mat distCoeff;
 	vector<Mat> rvecs;
 	vector<Mat> tvecs;
-
+	Mat mapUndistortX;
+	Mat mapUndistortY;
+	Mat mapBirdX;
+	Mat mapBirdY;
+	Mat mapBirdInvX;
+	Mat mapBirdInvY;
+	Camera(int imgWidth,int imgHeight)
+	{
+		mapUndistortX = Mat(Size(imgWidth,imgHeight), CV_32FC1);
+		mapUndistortY = Mat(Size(imgWidth,imgHeight), CV_32FC1);
+		mapBirdX = Mat(Size(imgWidth,imgHeight), CV_32FC1);
+		mapBirdY = Mat(Size(imgWidth,imgHeight), CV_32FC1);
+		mapBirdInvX = Mat(Size(imgWidth,imgHeight), CV_32FC1);
+		mapBirdInvY = Mat(Size(imgWidth,imgHeight), CV_32FC1);
+	}
 };
 
 
@@ -65,19 +80,27 @@ private:
 	int imgHeight;
 	int imgWidth;
 	float distToCtr;
-	Camera cam;
+	
 	Line leftLine;
 	Line rightLine;
-	Mat Mtrans;
-	Mat Minv;
+	
 	Point2f src[4];
 	Point2f dst[4];
+	clock_t startTime,endTime;
+	
 public:
-	LaneDetector(int h, int w): imgHeight(h), imgWidth(w), distToCtr(0)	
+	LaneDetector(int h, int w): imgHeight(h), imgWidth(w), distToCtr(0)	,imgSize(w,h),cam(w,h)
 	{
-		src[0]=Point2f(250, imgHeight),src[1]=Point2f(595, 450),src[2]=Point2f(687, 450),src[3]=Point2f(1170, imgHeight);
-		dst[0]=Point2f(320, imgHeight),dst[1]=Point2f(320, 0),dst[2]=Point2f(960, 0),dst[3]=Point2f(960, imgHeight);
+		/*src[0]=Point2f(250, imgHeight),src[1]=Point2f(595, 450),src[2]=Point2f(687, 450),src[3]=Point2f(1170, imgHeight);*/
+		src[0]=Point2f(0, imgHeight-1),src[1]=Point2f(480, 424),src[2]=Point2f(870, 424),src[3]=Point2f(1280, imgHeight-1);
+		dst[0]=Point2f(320, imgHeight-1),dst[1]=Point2f(320, 0),dst[2]=Point2f(960, 0),dst[3]=Point2f(960, imgHeight-1);
 	}
+	Mat R;
+	Mat H;
+	Size imgSize;
+	Camera cam;
+	Mat Mtrans;
+	Mat Minv;
 
 	void detect(InputArray img, OutputArray out, OutputArray debug);
 
@@ -97,7 +120,8 @@ public:
 
 	void projectBackward(InputArray img, InputArray det, OutputArray overlay,
 			OutputArray wrpdbck);
-
+	void LaneDetector::perspective_to_maps(const cv::Mat &perspective_mat, const cv::Size img_size,cv::Mat &map1, cv::Mat &map2);
+	void LaneDetector::mapCal(Mat cameraMat,Mat distCoeff,Mat Mtrans,Mat Minv);
 };
 
 
